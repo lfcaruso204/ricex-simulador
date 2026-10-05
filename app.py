@@ -131,9 +131,14 @@ with st.expander("➕ Adicionar novo produto ao catálogo"):
                 st.success(f"Produto '{novo_nome}' adicionado ao catálogo.")
                 st.rerun()
             except Exception as e:
-                st.error(f"Não foi possível adicionar: {e}")
+                # Tratamento amigável para o erro de referência duplicada
+                if "UNIQUE constraint failed" in str(e):
+                    st.error(f"❌ Erro: Já existe um produto cadastrado com a Ref. **'{novo_ref}'**. Use um código diferente.")
+                else:
+                    st.error(f"Não foi possível adicionar: {e}")
         else:
             st.warning("Informe ao menos Ref., Produto e FOB US$/un.")
+
 
 produtos_db = listar_produtos()
 if not produtos_db:
