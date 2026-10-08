@@ -6,6 +6,7 @@ com opções dinâmicas de frete (Fatura ou Quantidade), parâmetros de venda
 (ICMS de Venda, Marketing e Outros), e roteiro analítico dos cálculos.
 """
 import base64
+import random
 from pathlib import Path
 import pandas as pd
 import streamlit as st
@@ -52,8 +53,17 @@ placeholder_metric = col_metric.empty()
 st.divider()
 
 
+# Funções universais de formatação customizada
 def _fmt_rs(v: float) -> str:
     return "R$ " + f"{v:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+
+
+def _fmt_usd(v: float) -> str:
+    return "US$ " + f"{v:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+
+
+def _fmt_qtd(v: int) -> str:
+    return f"{v:,}".replace(",", ".")
 
 
 def _fmt_pct(v: float) -> str:
@@ -112,10 +122,14 @@ with st.sidebar:
 # ----------------------------------------------------------------------------
 st.header("1. Seleção de produtos da remessa")
 
-with st.expander("➕ Adicionar novo produto ao catálogo"):
+from database import remover_produto
+
+aba_adicionar, aba_remover = st.tabs(["➕ Adicionar Produto", "❌ Remover Produto"])
+
+with aba_adicionar:
     nc1, nc2, nc3, nc4, nc5 = st.columns([1, 2, 2, 1, 1])
     with nc1:
-        novo_ref = st.text_input("Ref.", key="novo_ref")
+        novo_ref = st.text_input("Ref. (Opcional)", key="novo_ref")
     with nc2:
         novo_nome = st.text_input("Produto", key="novo_nome")
     with nc3:
@@ -124,21 +138,50 @@ with st.expander("➕ Adicionar novo produto ao catálogo"):
         novo_fob = st.number_input("FOB US$/un.", min_value=0.0, value=0.0, step=0.1, key="novo_fob")
     with nc5:
         novo_qtd = st.number_input("Qtd. padrão", min_value=1, value=1000, step=50, key="novo_qtd")
-    if st.button("Adicionar produto"):
-        if novo_ref and novo_nome and novo_fob > 0:
+        if st.button("Adicionar produto"):
+            if not novo_ref.strip():
+                try:
+                    produtos_existentes = listar_produtos()
+                    refs_existentes = [int(p['ref']) for p in produtos_existentes if p['ref'].isdigit()]
+                    novo_ref = str(max(refs_existentes) + 1) if refs_existentes else "1000"
+                except:
+                    novo_ref = str(random.randint(1000, 9999))
+            
+            if novo_nome and novo_fob > 0:
+                try:
+                    adicionar_produto(novo_ref, novo_nome, novo_comp, novo_fob, int(novo_qtd))
+                    st.success(f"Produto '{novo_nome}' adicionado com a Ref: {novo_ref}")
+                    st.rerun()
+                except Exception as e:
+                    if "UNIQUE constraint failed" in str(e):
+                        st.error(f"❌ Erro: Já existe um produto cadastrado com a Ref. **'{novo_ref}'**.")
+                    else:
+                        st.error(f"Não foi possível adicionar: {e}")
+            else:
+                st.warning("Informe ao menos o nome do Produto e o preço FOB US$/un.")
+
+with aba_remover:
+    produtos_db_remover = listar_produtos(somente_ativos=True)
+    
+    if produtos_db_remover:
+        opcoes_remover = {f"{p['ref']} — {p['produto']}": p['id'] for p in produtos_db_remover}
+        
+        produto_para_remover = st.selectbox(
+            "Selecione o produto que deseja excluir do catálogo:",
+            options=list(opcoes_remover.keys()),
+            key="sb_remover_produto"
+        )
+        
+        if st.button("Remover Produto Permanentemente", type="secondary"):
+            id_para_remover = opcoes_remover[produto_para_remover]
             try:
-                adicionar_produto(novo_ref, novo_nome, novo_comp, novo_fob, int(novo_qtd))
-                st.success(f"Produto '{novo_nome}' adicionado ao catálogo.")
+                remover_produto(id_para_remover)
+                st.success("Produto removido com sucesso!")
                 st.rerun()
             except Exception as e:
-                # Tratamento amigável para o erro de referência duplicada
-                if "UNIQUE constraint failed" in str(e):
-                    st.error(f"❌ Erro: Já existe um produto cadastrado com a Ref. **'{novo_ref}'**. Use um código diferente.")
-                else:
-                    st.error(f"Não foi possível adicionar: {e}")
-        else:
-            st.warning("Informe ao menos Ref., Produto e FOB US$/un.")
-
+                st.error(f"Erro ao remover produto: {e}")
+    else:
+        st.info("Não há produtos ativos no catálogo para remover.")
 
 produtos_db = listar_produtos()
 if not produtos_db:
@@ -163,30 +206,37 @@ st.divider()
 # 2. Definição de Quantidades, Itens e Tipo de Frete
 # ----------------------------------------------------------------------------
 st.header("2. Quantidades, preços e parametrização do Frete")
-st.caption("Defina o método de distribuição de frete por item: baseado no valor da FATURA ou proporcional à QUANTIDADE.")
+
+tipo_frete_global = st.radio(
+    "Defina o método de distribuição do frete para toda a remessa:",
+    options=["Por Fatura (Proporcional ao valor em US$)", "Por Quantidade / Peso (Proporcional ao quilo/volume)"],
+    horizontal=True
+)
+
+is_frete_quantidade = "Quantidade" in tipo_frete_global
 
 linhas_itens = []
 for label in selecionados_labels:
     p = opcoes[label]
-    linhas_itens.append({
+    item_dict = {
         "Ref.": p["ref"],
         "Produto": p["produto"],
         "Composição/Tipo": p["composicao"],
         "Qtd.": int(p["qtd_padrao"]),
         "FOB US$/un.": float(p["fob_usd"]),
-        "Tipo de Frete": "Por Fatura"  # Opção inicial padrão
-    })
+    }
+    if is_frete_quantidade:
+        item_dict["Peso Unit. (kg)"] = 1.0  
+    linhas_itens.append(item_dict)
 
 df_itens_config = pd.DataFrame(linhas_itens)
 
 col_config_itens = {
     "Qtd.": st.column_config.NumberColumn(min_value=1, step=1),
-    "FOB US$/un.": st.column_config.NumberColumn(min_value=0.0, step=0.1, format="%.2f"),
-    "Tipo de Frete": st.column_config.SelectboxColumn(
-        options=["Por Fatura", "Por Quantidade"],
-        required=True
-    )
+    "FOB US$/un.": st.column_config.NumberColumn(min_value=0.0, step=0.1, format="US$ %.2f"),
 }
+if is_frete_quantidade:
+    col_config_itens["Peso Unit. (kg)"] = st.column_config.NumberColumn(min_value=0.01, step=0.1, format="%.2f kg")
 
 df_itens_editado = st.data_editor(
     df_itens_config,
@@ -197,6 +247,24 @@ df_itens_editado = st.data_editor(
     key="editor_itens_frete"
 )
 
+total_qtd_t2 = df_itens_editado["Qtd."].sum()
+total_fob_t2 = (df_itens_editado["Qtd."] * df_itens_editado["FOB US$/un."]).sum()
+
+if is_frete_quantidade:
+    # Correção da fórmula do peso total acumulado baseado nas edições em tempo real
+    total_peso_t2 = (df_itens_editado["Qtd."] * df_itens_editado["Peso Unit. (kg)"]).sum()
+    peso_formatado = f"{total_peso_t2:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+    st.markdown(
+        f"📊 **SOMA** — Quantidade Total: **{_fmt_qtd(int(total_qtd_t2))}** | "
+        f"FOB Total: **{_fmt_usd(total_fob_t2)}** | "
+        f"Peso Total: **{peso_formatado} kg**"
+    )
+else:
+    st.markdown(
+        f"📊 **SOMA** — Quantidade Total: **{_fmt_qtd(int(total_qtd_t2))}** | "
+        f"FOB Total: **{_fmt_usd(total_fob_t2)}**"
+    )
+
 st.divider()
 
 
@@ -205,13 +273,13 @@ st.divider()
 # ============================================================================
 st.header("3. Custo geral da importação (Nacionalização)")
 
-# Preparação dos dados para o motor de cálculos levando em consideração a divisão do frete personalizado
 total_fob_fatura = 0.0
-total_qtd_unidades = 0.0
+total_peso_acumulado = 0.0
 
 for _, row in df_itens_editado.iterrows():
     total_fob_fatura += float(row["Qtd."]) * float(row["FOB US$/un."])
-    total_qtd_unidades += float(row["Qtd."])
+    if is_frete_quantidade:
+        total_peso_acumulado += float(row["Qtd."]) * float(row["Peso Unit. (kg)"])
 
 itens_pre_calculo = []
 for _, row in df_itens_editado.iterrows():
@@ -219,11 +287,12 @@ for _, row in df_itens_editado.iterrows():
     fob_unit = float(row["FOB US$/un."])
     fob_total_item = qtd * fob_unit
     
-    # Aplicação da regra customizada de Frete por Item
-    if row["Tipo de Frete"] == "Por Fatura" and total_fob_fatura > 0:
+    # Correção crítica do motor de cálculo: vinculando o frete estrito à variável total de quilos correta
+    if not is_frete_quantidade and total_fob_fatura > 0:
         fator_frete = fob_total_item / total_fob_fatura
-    elif row["Tipo de Frete"] == "Por Quantidade" and total_qtd_unidades > 0:
-        fator_frete = qtd / total_qtd_unidades
+    elif is_frete_quantidade and total_peso_acumulado > 0:
+        item_peso_total = qtd * float(row["Peso Unit. (kg)"])
+        fator_frete = item_peso_total / total_peso_acumulado
     else:
         fator_frete = 1.0 / len(df_itens_editado)
         
@@ -237,13 +306,9 @@ for _, row in df_itens_editado.iterrows():
         fob_unit_usd=fob_unit,
         modo="markup" 
     )
-    # Atribuição temporária do frete customizado calculado
     item.frete_customizado_usd = frete_atribuido_usd
     itens_pre_calculo.append(item)
 
-# ----------------------------------------------------------------------------
-# Chamada Oficial do Motor de Cálculo (Gera a variável 'resultado')
-# ----------------------------------------------------------------------------
 resultado = calcular_simulacao(
     itens=itens_pre_calculo,
     cambio=cambio,
@@ -258,14 +323,28 @@ resultado = calcular_simulacao(
 )
 
 m1, m2, m3, m4 = st.columns(4)
-m1.metric("Total da invoice (US$)", f"US$ {resultado.total_invoice_usd:,.2f}")
+m1.metric("Total da invoice (US$)", _fmt_usd(resultado.total_invoice_usd))
 m2.metric("Mercadoria (R$)", _fmt_rs(resultado.mercadoria_rs_total))
 m3.metric("Valor aduaneiro (R$)", _fmt_rs(resultado.valor_aduaneiro_rs))
 m4.metric("Custo de Importação (R$)", _fmt_rs(resultado.custo_geral_importacao_rs))
 
+st.info(
+    "💡 **Esclarecimento de Conceitos:**\n"
+    "- **Valor Aduaneiro:** Base tributária regulamentar composta pelo preço da mercadoria + frete + seguro internacional (antes das taxas nacionais).\n"
+    "- **Custo de Importação (Nacionalização):** Soma do Valor Aduaneiro convertido com *todos* os impostos (II, IPI, PIS, COFINS, ICMS) e taxas de infraestrutura (Porto/AFRMM)."
+)
+
 impostos_df = pd.DataFrame(
     {
-        "Tributo/Encargo": ["II", "IPI", "PIS-Importação", "COFINS-Importação", "AFRMM", "ICMS Importação", "Despesas portuárias"],
+        "Tributo/Encargo": [
+            f"II ({_fmt_pct(ii)})", 
+            f"IPI ({_fmt_pct(ipi)})", 
+            f"PIS-Importação ({_fmt_pct(pis)})", 
+            f"COFINS-Importação ({_fmt_pct(cofins)})", 
+            f"AFRMM ({_fmt_pct(afrmm)})", 
+            f"ICMS Importação ({_fmt_pct(icms)})", 
+            "Despesas portuárias"
+        ],
         "Valor (R$)": [
             resultado.ii_rs_total,
             resultado.ipi_rs_total,
@@ -277,8 +356,14 @@ impostos_df = pd.DataFrame(
         ],
     }
 )
-impostos_df["Valor (R$)"] = impostos_df["Valor (R$)"].map(_fmt_rs)
-st.dataframe(impostos_df, hide_index=True, use_container_width=True)
+
+soma_impostos = impostos_df["Valor (R$)"].sum()
+
+df_impostos_render = impostos_df.copy()
+df_impostos_render["Valor (R$)"] = df_impostos_render["Valor (R$)"].map(_fmt_rs)
+st.dataframe(df_impostos_render, hide_index=True, use_container_width=True)
+
+st.markdown(f"💰 **SOMA** — Total de Tributos/Encargos: **{_fmt_rs(soma_impostos)}**")
 
 st.divider()
 
@@ -331,12 +416,21 @@ df_prec_editado = st.data_editor(
     key="editor_precificacao"
 )
 
+soma_custo_nac_unit_t4 = df_prec_editado["Custo Nacionalizado Unit."].sum()
+st.markdown(f"📊 **SOMA** — Custo Nacionalizado Unitário Total: **{_fmt_rs(soma_custo_nac_unit_t4)}**")
+
 # ----------------------------------------------------------------------------
-# Recálculo Comercial Pós-Importação (Incluindo ICMS Venda e Outros Parâmetros)
+# Recálculo Comercial Pós-Importação (Tabela Única Consolidada)
 # ----------------------------------------------------------------------------
 det_rows = []
 total_receita_simulada = 0.0
 total_custo_comercial_total = 0.0
+
+soma_qtd_t5 = 0
+soma_custo_un_absoluto = 0.0
+soma_icms_venda_total = 0.0
+soma_mkt_total = 0.0
+soma_preco_venda_un_total = 0.0
 
 for idx, item in enumerate(resultado.itens):
     row_edit = df_prec_editado.iloc[idx]
@@ -352,10 +446,7 @@ for idx, item in enumerate(resultado.itens):
     else:
         preco_venda_unit = float(row_edit["Preço Venda Final Requerido (R$)"])
         margem_liquida_rs = (preco_venda_unit * (1.0 - icms_venda - outros_custos_pct)) - custo_base_unit
-        if custo_base_unit > 0:
-            mk_aplicado = margem_liquida_rs / custo_base_unit
-        else:
-            mk_aplicado = 0.0
+        mk_aplicado = (margem_liquida_rs / custo_base_unit) if custo_base_unit > 0 else 0.0
 
     venda_total_item = preco_venda_unit * item.qtd
     icms_venda_rs = venda_total_item * icms_venda
@@ -367,24 +458,47 @@ for idx, item in enumerate(resultado.itens):
     total_receita_simulada += venda_total_item
     total_custo_comercial_total += custo_total_comercial_item
     
+    soma_qtd_t5 += int(item.qtd)
+    soma_custo_un_absoluto += custo_base_unit
+    soma_icms_venda_total += (icms_venda_rs / item.qtd if item.qtd > 0 else 0)
+    soma_mkt_total += (outros_custos_rs / item.qtd if item.qtd > 0 else 0)
+    soma_preco_venda_un_total += preco_venda_unit
+    
     det_rows.append({
         "Produto": f"{item.ref} — {item.produto}",
         "Qtd.": int(item.qtd),
-        "Custo Nac. Un.": _fmt_rs(custo_base_unit),
-        "Markup": _fmt_pct(mk_aplicado),
-        "ICMS Venda": _fmt_rs(icms_venda_rs / item.qtd if item.qtd > 0 else 0),
-        "Outros/Mkt": _fmt_rs(outros_custos_rs / item.qtd if item.qtd > 0 else 0),
-        "Preço Venda Un.": round(preco_venda_unit, 2),
-        "Faturamento Esperado": round(venda_total_item, 2),
-        "Lucro Líquido": round(lucro_liquido_item, 2)
+        "Custo Nac. Un.": custo_base_unit,
+        "Markup": mk_aplicado,
+        "ICMS Venda": (icms_venda_rs / item.qtd if item.qtd > 0 else 0),
+        "Outros/Mkt": (outros_custos_rs / item.qtd if item.qtd > 0 else 0),
+        "Preço Venda Un.": preco_venda_unit,
+        "Faturamento Esperado": venda_total_item,
+        "Lucro Líquido": lucro_liquido_item
     })
 
 df_detalhado_final = pd.DataFrame(det_rows)
 
-st.subheader("📋 Tabela Consolidada de Distribuição Comercial por Item")
-st.dataframe(df_detalhado_final, hide_index=True, use_container_width=True)
+df_det_render = pd.DataFrame()
+df_det_render["Produto"] = df_detalhado_final["Produto"]
+df_det_render["Qtd."] = df_detalhado_final["Qtd."]
+df_det_render["Custo Nac. Un."] = df_detalhado_final["Custo Nac. Un."].map(_fmt_rs)
+df_det_render["Markup"] = df_detalhado_final["Markup"].map(_fmt_pct)
+df_det_render["ICMS Venda"] = df_detalhado_final["ICMS Venda"].map(_fmt_rs)
+df_det_render["Outros/Mkt"] = df_detalhado_final["Outros/Mkt"].map(_fmt_rs)
+df_det_render["Preço Venda Un."] = df_detalhado_final["Preço Venda Un."].map(_fmt_rs)
+df_det_render["Faturamento Esperado"] = df_detalhado_final["Faturamento Esperado"].map(_fmt_rs)
+df_det_render["Lucro Líquido"] = df_detalhado_final["Lucro Líquido"].map(_fmt_rs)
 
-# Atualização dos KPI Globais no Topo do Dashboard dinamicamente
+st.subheader("📋 Tabela Consolidada de Distribuição Comercial por Item")
+st.dataframe(df_det_render, hide_index=True, use_container_width=True)
+
+st.markdown(
+    f"📊 **SOMA** — Quantidade Total: **{_fmt_qtd(soma_qtd_t5)}** | "
+    f"Custo Nac. Unitário Total: **{_fmt_rs(soma_custo_un_absoluto)}** | "
+    f"Faturamento Geral Esperado: **{_fmt_rs(total_receita_simulada)}** | "
+    f"Lucro Líquido Geral: **{_fmt_rs(total_receita_simulada - total_custo_comercial_total)}**"
+)
+
 lucro_global_calculado = total_receita_simulada - total_custo_comercial_total
 roi_global_calculado = (lucro_global_calculado / total_custo_comercial_total) if total_custo_comercial_total > 0 else 0.0
 
@@ -428,9 +542,9 @@ st.divider()
 st.header("5. Resumo Financeiro Consolidado da Remessa")
 
 r1, r2, r3, r4 = st.columns(4)
-r1.metric("Custo Total Acumulado (R$)", _fmt_rs(total_custo_comercial_total))
-r2.metric("Receita Total Bruta (R$)", _fmt_rs(total_receita_simulada))
-r3.metric("Lucro Líquido Final (R$)", _fmt_rs(lucro_global_calculado))
+r1.metric("Custo Total Acumulado (R\$)", _fmt_rs(total_custo_comercial_total))
+r2.metric("Receita Total Bruta (R\$)", _fmt_rs(total_receita_simulada))
+r3.metric("Lucro Líquido Final (R\$)", _fmt_rs(lucro_global_calculado))
 r4.metric("ROI Líquido da Operação", _fmt_pct(roi_global_calculado))
 
 st.subheader("💰 Preço Final Total da Remessa (Faturamento Estimado)")
@@ -450,7 +564,9 @@ st.header("6. Roteiro e Memorial de Cálculo da Importação")
 st.markdown("""
 Este roteiro resume todo o fluxo regulatório e comercial executado pelo sistema para a composição do preço final dos seus produtos:
 
-1. **Formação do Valor Aduaneiro**: Para cada item, calcula-se o valor **FOB Unitário** nacionalizado (multiplicado pelo câmbio informado e pela quantidade). Soma-se a isso a cota correspondente do **Frete Internacional** calculada dinamicamente com base nas regras de rateio escolhidas (proporcional ao valor da *Fatura* ou proporcional ao volume de *Quantidade*).
+1. **Formação do Valor Aduaneiro e Rateio de Frete**: Para cada item, calcula-se o valor **FOB Unitário** nacionalizado (multiplicado pelo câmbio informado e pela quantidade). Soma-se a isso a cota correspondente do frete internacional conforme a modalidade escolhida para a tabela como um todo:
+    * **Por Fatura**: Geralmente utilizado quando se tem a intenção de importar muitos itens variados. O sistema pega o valor total da nota fiscal (invoice final) e divide proporcionalmente pelo valor de cada item.
+    * **Por Quantidade**: Configuração voltada para o cálculo baseado no peso bruto ou cubagem que a mercadoria possui. Ideal para cenários de estufagem pesada (como um contêiner de 25 Toneladas), onde calcula-se o custo pelo quilo individual de cada produto. Assim que definido, esse peso distribuído é incorporado diretamente ao custo do restante do projeto.
 2. **Cálculo em Cadeia dos Impostos Federais**:
     * **II (Imposto de Importação)**: Incide diretamente sobre o Valor Aduaneiro.
     * **IPI (Imposto sobre Produtos Industrializados)**: Incide sobre a base composta pelo (Valor Aduaneiro + II).
@@ -470,7 +586,6 @@ st.divider()
 # ============================================================================
 st.header("7. Gerar e Visualizar Orçamento em PDF")
 
-# Inicializa as variáveis de memória do Streamlit se elas não existirem
 if "pdf_bytes_gerado" not in st.session_state:
     st.session_state.pdf_bytes_gerado = None
 if "pdf_gerado_sucesso" not in st.session_state:
@@ -483,7 +598,6 @@ with pc2:
     numero_orcamento = st.text_input("Número do orçamento (opcional)", key="pdf_numero")
 observacoes = st.text_area("Observações do Orçamento (opcional)", height=80, key="pdf_obs")
 
-# Botão principal que dispara a geração pesada na memória
 if st.button("📄 Gerar e Visualizar PDF", type="primary"):
     valores_comerciais = {
         "custo_total_rs": total_custo_comercial_total,
@@ -510,24 +624,18 @@ if st.button("📄 Gerar e Visualizar PDF", type="primary"):
             observacoes=observacoes,
         )
     
-    # Salva o arquivo gerado na memória global do Streamlit para não sumir no reload
     st.session_state.pdf_bytes_gerado = bytes_temp
     st.session_state.pdf_gerado_sucesso = True
 
-# Bloco de Renderização Persistente (Executa fora do clique do botão)
 if st.session_state.pdf_gerado_sucesso and st.session_state.pdf_bytes_gerado is not None:
     st.success("PDF gerado com sucesso! Veja a prévia abaixo:")
     
     try:
-        import fitz  # PyMuPDF
-        
-        # Carrega o PDF a partir da memória salva no session_state
+        import fitz  
         doc = fitz.open(stream=st.session_state.pdf_bytes_gerado, filetype="pdf")
-        
-        # Renderiza as páginas na tela de forma contínua
         for pagina_num in range(len(doc)):
             pagina = doc.load_page(pagina_num)
-            pix = pagina.get_pixmap(dpi=130)  # Resolução otimizada para web
+            pix = pagina.get_pixmap(dpi=130)  
             img_data = pix.tobytes("png")
             
             st.image(
@@ -537,14 +645,12 @@ if st.session_state.pdf_gerado_sucesso and st.session_state.pdf_bytes_gerado is 
             )
             
     except ImportError:
-        # Fallback de segurança caso o PyMuPDF não esteja instalado no ambiente correto
         import base64
         base64_pdf = base64.b64encode(st.session_state.pdf_bytes_gerado).decode('utf-8')
         pdf_display = f'<iframe src="data:application/pdf;base64,{base64_pdf}" width="100%" height="600px" style="border:1px solid #ccc; border-radius:8px;"></iframe>'
         st.markdown(pdf_display, unsafe_allow_html=True)
     
     st.divider()
-    # O botão de baixar lê os dados diretamente do cache da memória estável
     st.download_button(
         label="⬇️ Baixar arquivo PDF Oficial",
         data=st.session_state.pdf_bytes_gerado,
@@ -555,25 +661,3 @@ if st.session_state.pdf_gerado_sucesso and st.session_state.pdf_bytes_gerado is 
 
 st.divider()
 st.caption("Ricex Importação — Simulador interno. Valores sujeitos a variação cambial e condições comerciais no embarque.")
-
-
-#%%
-# pip install pymupdf
-
-
-#%%
-
-# cd "C:\Users\Luca Caruso\Desktop\Projetos\Case Ricex\Simulacao_Roupas\ricex_app"
-# pip install -r requirements.txt
-# streamlit run app.py
-
-
-
-
-
-
-
-
-
-
-
