@@ -7,7 +7,17 @@ import pandas as pd
 from pathlib import Path
 
 # Apontando exatamente para o seu arquivo oficial .db
+# [CORRIGIDO] Caminho inteligente que funciona tanto localmente quanto no Streamlit Share
 DB_PATH = Path(__file__).parent / "data" / "ricex_importacao.db"
+
+if not DB_PATH.parent.exists():
+    # Se a pasta 'data' não estiver dentro de 'ricex_app' (como ocorre na raiz do GitHub), aponta para a raiz
+    DB_PATH = Path(__file__).parent.parent / "data" / "ricex_importacao.db"
+    
+    # Se ainda assim não achar (caso o arquivo esteja solto na raiz do repositório), garante o fallback
+    if not DB_PATH.parent.exists():
+        DB_PATH = Path("data/ricex_importacao.db")
+
 
 PRODUTOS_SEED = [
     ("A006", "Bermuda / Shorts Chino",              "98% Algodão / 2% Elastano",                   7.00, 1000),
