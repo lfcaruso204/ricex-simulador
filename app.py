@@ -56,6 +56,7 @@ if "ipi" not in st.session_state:
 if "pis" not in st.session_state:
     st.session_state["pis"] = float(params_db.get("pis", 0.021)) * 100
 if "cofins" not in st.session_state:
+    # Corrigido para carregar do banco de dados com segurança no início do app
     st.session_state["cofins"] = float(params_db.get("cofins", 0.0965)) * 100
 if "icms" not in st.session_state:
     st.session_state["icms"] = float(params_db.get("icms", 0.14)) * 100
@@ -68,11 +69,17 @@ if "outros_custos_pct" not in st.session_state:
 if "tipo_frete_global" not in st.session_state:
     st.session_state["tipo_frete_global"] = "Por Fatura (Proporcional ao valor em US$)"
 
+# --- ACRESCENTADO: Inicialização segura das variáveis de controle do PDF ---
+if "pdf_bytes_gerado" not in st.session_state:
+    st.session_state["pdf_bytes_gerado"] = None
+if "pdf_gerado_sucesso" not in st.session_state:
+    st.session_state["pdf_gerado_sucesso"] = False
 
 # ----------------------------------------------------------------------------
 # Cabeçalho com logo + Reservas vazias (Empty) para o dashboard superior direito
 # ----------------------------------------------------------------------------
-col_logo, col_title, col_chart, col_metric = st.columns([1.0, 3.5, 4.0, 1.5])
+col_logo, col_title, col_chart, col_metric = st.columns([1.0, 2.5, 3.5, 3.0])
+
 
 with col_logo:
     if LOGO_PATH.exists():
@@ -125,8 +132,7 @@ if modelos_disponiveis:
         col_btn1, col_btn2, _ = st.columns([2.5, 2.5, 5.0])
         
         with col_btn1:
-            if st.button("📂 Restaurar Cenário Selecionado", use_container_width=True):
-                # IMPORTANTE: Esta linha abaixo precisa de 4 espaços a mais que o 'if' de cima!
+            if st.button("📂 Aplicar Cenário Selecionado", use_container_width=True):
                 params_rec, itens_rec = carrega_modelo_simulacao(id_modelo)
                 if params_rec:
                     # 1. Sobrescreve TODOS os estados do Session State com os dados gravados na pasta
@@ -139,27 +145,20 @@ if modelos_disponiveis:
                     st.session_state["cofins"] = float(params_rec.get("cofins", 0.0965)) * 100
                     st.session_state["icms"] = float(params_rec.get("icms", 0.14)) * 100
                     st.session_state["afrmm"] = float(params_rec.get("afrmm", 0.08)) * 100
-                    
-                    # Garante que os parâmetros comerciais carreguem sempre como inteiros na tela
-                    rec_icms_venda = float(params_rec.get("icms_venda", 18.0))
-                    st.session_state["icms_venda"] = rec_icms_venda * 100 if rec_icms_venda < 1.0 else rec_icms_venda
-                    
-                    rec_outros = float(params_rec.get("outros_custos_pct", 5.0))
-                    st.session_state["outros_custos_pct"] = rec_outros * 100 if rec_outros < 1.0 else rec_outros
-                    
+                    st.session_state["icms_venda"] = float(params_rec.get("icms_venda", 0.18) if params_rec.get("icms_venda", 18.0) < 1.0 else params_rec.get("icms_venda", 18.0))
+                    st.session_state["outros_custos_pct"] = float(params_rec.get("outros_custos_pct", 0.05) if params_rec.get("outros_custos_pct", 5.0) < 1.0 else params_rec.get("outros_custos_pct", 5.0))
                     st.session_state["tipo_frete_global"] = params_rec.get("tipo_frete", "Por Fatura (Proporcional ao valor em US$)")
-                    
-                    # Memorização física das quantidades e itens editados na pasta
                     st.session_state["modelo_carregado_itens"] = itens_rec
                     
+                    # Salva o markup customizado da simulação para a tabela 4 ler
                     if "markup" in params_rec:
                         st.session_state["markup_salvo_pasta"] = float(params_rec.get("markup"))
                     
+                    # 2. Força o Streamlit a destruir os inputs antigos e redesenhar com os valores da pasta
                     st.session_state["reset_widgets_key"] += 1
+                    
                     st.success("Cenário preparado!")
                     st.rerun()
-
-
                     
         with col_btn2:
             if st.button("❌ Excluir Pasta / Modelo", type="secondary", use_container_width=True):
@@ -205,7 +204,6 @@ with st.sidebar:
     cofins_input = st.number_input("COFINS-Importação (%)", min_value=0.0, max_value=100.0, key=f"cofins{w_key}", value=st.session_state["cofins"], step=0.1)
     cofins_val = cofins_input / 100
 
-    # [CORRIGIDO] Mantendo o valor como porcentagem inteira na tela (ex: 14.00)
     icms_input = st.number_input("ICMS Importação (por dentro %)", min_value=0.0, max_value=99.0, key=f"icms{w_key}", value=st.session_state["icms"], step=0.5)
     icms_val = icms_input / 100
 
@@ -215,13 +213,11 @@ with st.sidebar:
     st.divider()
     st.subheader("📊 Parâmetros Comerciais e de Venda")
     
-    # [CORRIGIDO] Removida a divisão precoce por 100 para exibir como número inteiro (18.00 em vez de 0.18)
     icms_venda_input = st.number_input("ICMS da Venda Simulada (%)", min_value=0.0, max_value=100.0, key=f"icms_venda{w_key}", value=st.session_state["icms_venda"], step=0.5)
     icms_venda_val = icms_venda_input / 100
     
     outros_custos_input = st.number_input("Outros (Mkt, Propaganda, etc. %)", min_value=0.0, max_value=100.0, key=f"outros_custos_pct{w_key}", value=st.session_state["outros_custos_pct"], step=0.5)
     outros_custos_pct_val = outros_custos_input / 100
-
 
     st.sidebar.divider()
     if st.button("💾 Salvar como padrão", use_container_width=True):
@@ -235,53 +231,69 @@ with st.sidebar:
         st.success("Parâmetros salvos com padrão!")
 
 # ----------------------------------------------------------------------------
-#%% 1. Catálogo de produtos (SQLite) + seleção de itens
+# % % 1. Catálogo de produtos (SQLite) + seleção de itens
 # ----------------------------------------------------------------------------
 st.header("1. Seleção de produtos da remessa")
 
-aba_adicionar, aba_remover = st.tabs(["➕ Adicionar Produto", "❌ Remover Produto"])
+# --- ADICIONADO: Expander para recolher o gerenciamento do catálogo ---
+with st.expander("⚙️ Adicionar / Remover Produtos", expanded=False):
+    aba_adicionar, aba_remover = st.tabs(["➕ Adicionar Produto", "❌ Remover Produto"])
 
-with aba_adicionar:
-    nc1, nc2, nc3, nc4, nc5 = st.columns([1, 2, 2, 1, 1])
-    with nc1:
-        novo_ref = st.text_input("Ref. (Opcional)", key="novo_ref")
-    with nc2:
-        novo_nome = st.text_input("Produto", key="novo_nome")
-    with nc3:
-        novo_comp = st.text_input("Composição/Tipo", key="novo_comp")
-    with nc4:
-        novo_fob = st.number_input("FOB US$/un.", min_value=0.0, value=0.0, step=0.1, key="novo_fob")
-    with nc5:
-        novo_qtd = st.number_input("Qtd. padrão", min_value=1, value=1000, step=50, key="novo_qtd")
+    with aba_adicionar:
+        nc1, nc2, nc3, nc4, nc5 = st.columns([1, 2, 2, 1, 1])
+        with nc1:
+            novo_ref = st.text_input("Ref. (Opcional)", key="novo_ref")
+        with nc2:
+            novo_nome = st.text_input("Produto", key="novo_nome")
+        with nc3:
+            novo_comp = st.text_input("Composição/Tipo", key="novo_comp")
+        with nc4:
+            novo_fob = st.number_input("FOB US$/un.", min_value=0.0, value=0.0, step=0.1, key="novo_fob")
+        with nc5:
+            novo_qtd = st.number_input("Qtd. padrão", min_value=1, value=1000, step=50, key="novo_qtd")
+
         if st.button("Adicionar produto"):
             if not novo_ref.strip():
                 try:
                     produtos_existentes = listar_produtos()
-                    refs_existentes = [int(p['ref']) for p in produtos_existentes if p['ref'].isdigit()]
+                    
+                    # MODIFICADO: Filtra apenas referências numéricas que tenham até 4 dígitos (<= 9999)
+                    refs_existentes = [
+                        int(p["ref"]) for p in produtos_existentes 
+                        if p["ref"].isdigit() and len(p["ref"]) <= 4
+                    ]
+                    
+                    # Se houver alguma referência de até 4 dígitos, pega o maior e soma 1. Caso contrário, começa em 1000.
                     novo_ref = str(max(refs_existentes) + 1) if refs_existentes else "1000"
                 except:
                     novo_ref = str(random.randint(1000, 9999))
-            
+
             if novo_nome and novo_fob > 0:
                 try:
                     adicionar_produto(novo_ref, novo_nome, novo_comp, novo_fob, int(novo_qtd))
-                    st.success(f"Produto '{novo_nome}' adicionado com sucesso!")
+                    st.success(f"Produto {novo_nome} adicionado com sucesso!")
                     st.rerun()
                 except Exception as e:
                     st.error(f"Não foi possível adicionar: {e}")
 
-with aba_remover:
-    produtos_db_remover = listar_produtos(somente_ativos=True)
-    if produtos_db_remover:
-        opcoes_remover = {f"{p['ref']} — {p['produto']}": p['id'] for p in produtos_db_remover}
-        produto_para_remover = st.selectbox("Selecione o produto que deseja excluir do catálogo:", options=list(opcoes_remover.keys()))
-        if st.button("Remover Produto"):
-            remover_produto(opcoes_remover[produto_para_remover])
-            st.success("Produto desativado com sucesso!")
-            st.rerun()
-    else:
-        st.info("Não há produtos ativos no catálogo para remover.")
 
+    with aba_remover:
+        produtos_db_remover = listar_produtos(somente_ativos=True)
+        if produtos_db_remover:
+            opcoes_remover = {f"{p['ref']} — {p['produto']}": p["id"] for p in produtos_db_remover}
+            produto_para_remover = st.selectbox(
+                "Selecione o produto que deseja excluir do catálogo:",
+                options=list(opcoes_remover.keys())
+            )
+            if st.button("Remover Produto"):
+                remover_produto(opcoes_remover[produto_para_remover])
+                st.success("Produto desativado com sucesso!")
+                st.rerun()
+        else:
+            st.info("Não há produtos ativos no catálogo para remover.")
+# ----------------------------------------------------------------------
+
+# O restante do código (Multiselect) fica FORA do expander para estar sempre visível
 produtos_db = listar_produtos()
 opcoes = {f"{p['ref']} — {p['produto']}": p for p in produtos_db}
 
@@ -327,27 +339,21 @@ linhas_itens = []
 for label in selecionados_labels:
     p = opcoes[label]
     
-    # [CORRIGIDO] Resgata rigorosamente a quantidade e preço unitário exatos que foram editados e guardados na pasta
     qtd_inicial = int(p["qtd_padrao"])
-    fob_inicial = float(p["fob_usd"])
     peso_inicial = 1.0
-    
     if "modelo_carregado_itens" in st.session_state:
-        # Busca se essa referência existe nos itens salvos da pasta aberta
-        match_salvo = next((it for it in st.session_state["modelo_carregado_itens"] if str(it.get("Ref.")).strip() == str(p["ref"]).strip()), None)
+        match_salvo = next((it for it in st.session_state["modelo_carregado_itens"] if it["Ref."] == p["ref"]), None)
         if match_salvo:
             qtd_inicial = int(match_salvo.get("Qtd.", qtd_inicial))
-            fob_inicial = float(match_salvo.get("FOB US$/un.", fob_inicial))
             peso_inicial = float(match_salvo.get("Peso Unit. (kg)", peso_inicial))
 
     item_dict = {
         "Ref.": p["ref"], "Produto": p["produto"], "Composição/Tipo": p["composicao"],
-        "Qtd.": qtd_inicial, "FOB US$/un.": fob_inicial,
+        "Qtd.": qtd_inicial, "FOB US$/un.": float(p["fob_usd"]),
     }
     if is_frete_quantidade:
         item_dict["Peso Unit. (kg)"] = peso_inicial  
     linhas_itens.append(item_dict)
-
 
 df_itens_config = pd.DataFrame(linhas_itens)
 
@@ -422,10 +428,28 @@ m2.metric("Mercadoria (R$)", _fmt_rs(resultado.mercadoria_rs_total))
 m3.metric("Valor aduaneiro (R$)", _fmt_rs(resultado.valor_aduaneiro_rs))
 m4.metric("Custo de Importação (R$)", _fmt_rs(resultado.custo_geral_importacao_rs))
 
+# Modificação no Passo 3 para exibir o valor das Despesas Portuárias no nome do encargo
 impostos_df = pd.DataFrame({
-    "Tributo/Encargo": [f"II ({_fmt_pct(ii_val)})", f"IPI ({_fmt_pct(ipi_val)})", f"PIS-Importação ({_fmt_pct(pis_val)})", f"COFINS-Importação ({_fmt_pct(cofins_val)})", f"AFRMM ({_fmt_pct(afrmm_val)})", f"ICMS Importação ({_fmt_pct(icms_val)})", "Despesas portuárias"],
-    "Valor (R$)": [resultado.ii_rs_total, resultado.ipi_rs_total, resultado.pis_rs_total, resultado.cofins_rs_total, resultado.afrmm_rs_total, resultado.icms_rs_total, resultado.despesas_portuarias_rs]
+    "Tributo/Encargo": [
+        f"II ({_fmt_pct(ii_val)})", 
+        f"IPI ({_fmt_pct(ipi_val)})", 
+        f"PIS-Importação ({_fmt_pct(pis_val)})", 
+        f"COFINS-Importação ({_fmt_pct(cofins_val)})", 
+        f"AFRMM ({_fmt_pct(afrmm_val)})", 
+        f"ICMS Importação ({_fmt_pct(icms_val)})", 
+        f"Despesas portuárias ({_fmt_rs(despesas_portuarias)})"  # <-- ATUALIZADO
+    ],
+    "Valor (R$)": [
+        resultado.ii_rs_total, 
+        resultado.ipi_rs_total, 
+        resultado.pis_rs_total, 
+        resultado.cofins_rs_total, 
+        resultado.afrmm_rs_total, 
+        resultado.icms_rs_total, 
+        resultado.despesas_portuarias_rs
+    ]
 })
+
 soma_impostos = impostos_df["Valor (R$)"].sum()
 
 df_impostos_render = impostos_df.copy()
@@ -460,7 +484,105 @@ for item in resultado.itens:
         linha["Preço Venda Final Requerido (R$)"] = round(item.custo_unit_rs * 2.0, 2)
     linhas_precificacao.append(linha)
 
-df_prec_editado = st.data_editor(pd.DataFrame(linhas_precificacao), hide_index=True, use_container_width=True, key=f"editor_precificacao{w_key}")
+# --- VISUALIZAÇÃO ATUALIZADA DO PASSO 4: Gráfico de Barras Empilhadas (Stacked) ---
+linhas_precificacao = []
+for item in resultado.itens:
+    custo_base_unit = item.custo_unit_rs
+    
+    if modo_calc == "markup":
+        mk_aplicado = float(markup_global_pct) / 100
+        divisor = 1.0 - (icms_venda_val + outros_custos_pct_val)
+        preco_venda_unit = (custo_base_unit * (1 + mk_aplicado)) / divisor if divisor > 0 else custo_base_unit * (1 + mk_aplicado)
+    else:
+        preco_venda_unit = round(custo_base_unit * 2.0, 2)
+    
+    margem_comercial_unit = max(0.0, preco_venda_unit - custo_base_unit)
+
+    linhas_precificacao.append({
+        "Ref.": item.ref, 
+        "Produto": item.produto, 
+        "Identificador": f"{item.ref} — {item.produto}",
+        "Custo Nacionalizado Unit.": round(custo_base_unit, 2),
+        "Margem Comercial Unit.": round(margem_comercial_unit, 2),
+        "Preço Venda Unit.": round(preco_venda_unit, 2),
+        "Markup (%)": float(markup_global_pct) if modo_calc == "markup" else 100.0
+    })
+
+df_base_prec = pd.DataFrame(linhas_precificacao)
+
+# Construção do gráfico de barras
+fig_barras = go.Figure()
+
+# 1ª Camada: Custo Nacionalizado
+fig_barras.add_trace(go.Bar(
+    y=df_base_prec["Identificador"],
+    x=df_base_prec["Custo Nacionalizado Unit."],
+    name="Custo Nacionalizado",
+    orientation='h',
+    marker_color='#1b2a4a', 
+    text=df_base_prec["Custo Nacionalizado Unit."].apply(lambda x: f"R$ {x:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")),
+    textposition='inside',
+    insidetextanchor='middle',
+    textfont=dict(color='white'), # Fonte branca para o custo interno
+    hovertemplate="<b>%{y}</b><br>Custo Nacionalizado: R$ %{x:,.2f}<extra></extra>"
+))
+
+# 2ª Camada: Acréscimo Comercial (Verde Água Escurecido + Texto Branco + Rótulo Externo)
+fig_barras.add_trace(go.Bar(
+    y=df_base_prec["Identificador"],
+    x=df_base_prec["Margem Comercial Unit."],
+    name="Margem + Impostos de Venda",
+    orientation='h',
+    marker_color='#00A877', # ATUALIZADO: Verde água mais escuro para melhor legibilidade
+    text=df_base_prec["Markup (%)"].apply(lambda x: f"Markup {x:.0f}%"),
+    textposition='inside',
+    insidetextanchor='middle',
+    textfont=dict(color='white'), # ATUALIZADO: Fonte rigorosamente em branco dentro do verde
+    hovertemplate="<b>%{y}</b><br>Margem Comercial: R$ %{x:,.2f}<extra></extra>"
+))
+
+# 3ª Camada Invisível (Apenas para fixar o rótulo externo "Preço Venda: R$ XX,XX" sem quebrar o empilhamento)
+fig_barras.add_trace(go.Bar(
+    y=df_base_prec["Identificador"],
+    x=[0.001] * len(df_base_prec), # Tamanho quase nulo para servir apenas de âncora na ponta
+    orientation='h',
+    showlegend=False,
+    marker=dict(color='rgba(0,0,0,0)'), # Totalmente transparente
+    # ATUALIZADO: Exibe o texto estático "Preço Venda: R$ XX,XX" colado no final da barra verde
+    text=df_base_prec["Preço Venda Unit."].apply(lambda x: f" Preço Venda: R$ {x:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")),
+    textposition='outside', 
+    hoverinfo='skip'
+))
+
+# --- AJUSTE DE LAYOUT PARA NÃO CORTAR O TEXTO ---
+
+# 1. Encontra o maior preço de venda para calcular um fôlego no eixo X
+maior_preco = float(df_base_prec["Preço Venda Unit."].max()) if not df_base_prec.empty else 100.0
+
+fig_barras.update_layout(
+    title="Composição do Preço de Venda Final (Custo vs. Formação de Margem)",
+    xaxis_title="Valor por Unidade (R$)",
+    # Define manualmente o limite do eixo X com 25% de folga para o rótulo caber perfeitamente
+    xaxis=dict(range=[0, maior_preco * 1.25]), 
+    barmode='stack', 
+    legend=dict(orientation="h", yanchor="top", y=-0.25, xanchor="center", x=0.5),
+    yaxis=dict(autorange="reversed"), 
+    margin=dict(l=10, r=20, t=40, b=80), # Margem direita reduzida pois a folga agora está no próprio eixo X
+    height=120 + (len(df_base_prec) * 38), 
+)
+
+# Garante que o texto fora da barra possa ser desenhado além da linha do gráfico sem ser clipado (cortado)
+fig_barras.update_traces(cliponaxis=False)
+
+st.plotly_chart(fig_barras, use_container_width=True, config={'displayModeBar': False})
+
+
+# Bloco Final de Compatibilidade com o restante das tabelas do app
+if modo_calc == "markup":
+    df_prec_editado = df_base_prec[["Ref.", "Produto", "Custo Nacionalizado Unit.", "Markup (%)"]].copy()
+else:
+    df_prec_editado = df_base_prec.rename(columns={"Preço Venda Unit.": "Preço Venda Final Requerido (R$)"})
+# --------------------------------------------------------------------------------
 
 
 # Recálculo Comercial Pós-Importação
@@ -514,7 +636,7 @@ roi_global_calculado = (lucro_global_calculado / total_custo_comercial_total) if
 # Atualização dos gráficos de rosca e blocos de KPI originais (Topo da página)
 # ----------------------------------------------------------------------------
 with placeholder_chart:
-    labels_pie = ['Custo de Importação + Comercial', 'Lucro Líquido Estimado']
+    labels_pie = ['Custo de Importação<br>+ Comercial', 'Lucro Líquido Estimado']
     values_pie = [total_custo_comercial_total, lucro_global_calculado]
     text_values_pie = [_fmt_rs(v) for v in values_pie]
 
@@ -537,12 +659,19 @@ with placeholder_chart:
     st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
 
 with placeholder_metric:
-    st.metric(
-        label="ROI Real da Operação",
-        value=f"{roi_global_calculado * 100:.2f}%",
-        delta=f"Lucro: {_fmt_rs(lucro_global_calculado)}",
-        delta_color="normal"
-    )
+    # Simulação visual perfeita do st.metric com quebra de linha livre para o Markup
+    # Alterado font-weight do valor do ROI para 400 para remover o negrito
+    html_metric = f"""
+    <div style="font-family: sans-serif;">
+        <span style="font-size: 14px; color: #555; font-weight: 400;">ROI Real da Operação</span>
+        <div style="font-size: 36px; font-weight: 400; color: #111; margin: 4px 0;">{roi_global_calculado * 100:.2f}%</div>
+        <div style="background-color: #e8f8f2; color: #008a57; padding: 4px 10px; border-radius: 20px; display: inline-block; font-size: 14px; font-weight: 500;">
+            📈 ↑ Lucro: {_fmt_rs(lucro_global_calculado)}<br>
+            📊 Markup Selecionado: {markup_global_pct:.1f}%
+        </div>
+    </div>
+    """
+    st.markdown(html_metric, unsafe_allow_html=True)
 
 # ----------------------------------------------------------------------------
 # Interface de salvamento do modelo de simulação em pasta
@@ -593,14 +722,13 @@ st.markdown(
 st.divider()
 
 # ============================================================================
-#%% 6. Geração e Prévia de PDF (VISUALIZADOR CORRIGIDO E RESTAURADO)
+
+# %% 6. Geração e Prévia de PDF (VISUALIZADOR CORRIGIDO E RESTAURADO)
+# ============================================================================
+# ============================================================================
+# %% 6. Geração e Prévia de PDF (VISUALIZADOR CORRIGIDO E RESTAURADO)
 # ============================================================================
 st.header("6. Gerar e Visualizar Orçamento em PDF")
-
-if "pdf_bytes_gerado" not in st.session_state:
-    st.session_state.pdf_bytes_gerado = None
-if "pdf_gerado_sucesso" not in st.session_state:
-    st.session_state.pdf_gerado_sucesso = False
 
 pc1, pc2 = st.columns(2)
 with pc1:
@@ -610,29 +738,45 @@ with pc2:
 observacoes = st.text_area("Observações do Orçamento (opcional)", height=80, key="pdf_obs")
 
 if st.button("📄 Gerar e Visualizar PDF"):
-    valores_comerciais = {
-        "custo_total_rs": total_custo_comercial_total,
-        "receita_total_rs": total_receita_simulada,
-        "lucro_total_rs": lucro_global_calculado,
-        "roi": roi_global_calculado
-    }
+    import copy
+    # 1. Criamos um clone do resultado para não estragar a memória da tela
+    resultado_pdf = copy.deepcopy(resultado)
     
-    try:
-        bytes_temp = gerar_pdf_orcamento(
-            resultado=resultado, logo_path=str(LOGO_PATH), cliente=cliente_nome,
-            numero_orcamento=numero_orcamento, observacoes=observacoes, valores_comerciais=valores_comerciais
-        )
-    except TypeError:
-        bytes_temp = gerar_pdf_orcamento(
-            resultado=resultado, logo_path=str(LOGO_PATH), cliente=cliente_nome,
-            numero_orcamento=numero_orcamento, observacoes=observacoes
-        )
+    # 2. Varre cada item e força o objeto a recalcular e gravar o markup/preço final selecionados na tela
+    for idx, item in enumerate(resultado_pdf.itens):
+        row_edit = df_prec_editado.iloc[idx]
+        
+        if modo_calc == "markup":
+            # Puxa os 40% (ou o valor digitado) da linha do editor
+            mk_aplicado = float(row_edit["Markup (%)"]) / 100
+            divisor = 1.0 - (icms_venda_val + outros_custos_pct_val)
+            
+            # Aplica a mesma fórmula comercial padrão do Passo 4
+            preco_venda_unit = (item.custo_unit_rs * (1 + mk_aplicado)) / divisor if divisor > 0 else item.custo_unit_rs * (1 + mk_aplicado)
+        else:
+            preco_venda_unit = float(row_edit["Preço Venda Final Requerido (R$)"])
+            margem_liquida_rs = (preco_venda_unit * (1.0 - icms_venda_val - outros_custos_pct_val)) - item.custo_unit_rs
+            mk_aplicado = (margem_liquida_rs / item.custo_unit_rs) if item.custo_unit_rs > 0 else 0.0
+
+        # Grava os valores calculados diretamente nas propriedades oficiais lidas pelo PDF de fábrica
+        item.markup = mk_aplicado
+        item.preco_venda_unit_calculado = preco_venda_unit
+
+    # 3. Chama a função estável original (sem parâmetros extras que geravam TypeError)
+    bytes_temp = gerar_pdf_orcamento(
+        resultado=resultado_pdf, 
+        logo_path=str(LOGO_PATH), 
+        cliente=cliente_nome,
+        numero_orcamento=numero_orcamento, 
+        observacoes=observacoes
+    )
     
     st.session_state.pdf_bytes_gerado = bytes_temp
-    st.session_state.pdf_gerado_sucesso = True
+    st.session_state.pdf_generated_sucesso = True  # Define que a geração funcionou
+    st.session_state.pdf_gerado_sucesso = True     # Garante sincronismo com o seu verificador
 
-# Bloco do Visualizador restaurado e acoplado após a geração
-if st.session_state.pdf_gerado_sucesso and st.session_state.pdf_bytes_gerado is not None:
+# Bloco do Visualizador acoplado após a geração
+if st.session_state.get("pdf_gerado_sucesso") and st.session_state.pdf_bytes_gerado is not None:
     st.success("PDF gerado com sucesso! Veja a prévia abaixo:")
     
     try:
@@ -650,7 +794,6 @@ if st.session_state.pdf_gerado_sucesso and st.session_state.pdf_bytes_gerado is 
             )
             
     except ImportError:
-        # Fallback de segurança usando iframe caso o ambiente não possua PyMuPDF instalado
         base64_pdf = base64.b64encode(st.session_state.pdf_bytes_gerado).decode('utf-8')
         pdf_display = f'<iframe src="data:application/pdf;base64,{base64_pdf}" width="100%" height="600px" style="border:1px solid #ccc; border-radius:8px;"></iframe>'
         st.markdown(pdf_display, unsafe_allow_html=True)
@@ -663,6 +806,3 @@ if st.session_state.pdf_gerado_sucesso and st.session_state.pdf_bytes_gerado is 
         mime="application/pdf",
         use_container_width=True
     )
-
-st.divider()
-st.caption("Ricex Importação — Simulador interno estruturado. Custo geral calculado com base nas definições inseridas pelo usuário.")
