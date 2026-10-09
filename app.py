@@ -135,28 +135,34 @@ if modelos_disponiveis:
             if st.button("📂 Aplicar Cenário Selecionado", use_container_width=True):
                 params_rec, itens_rec = carrega_modelo_simulacao(id_modelo)
                 if params_rec:
-                    # 1. Sobrescreve TODOS os estados do Session State com os dados gravados na pasta
+                    # 1. Sobrescreve TODOS os estados com o padrão correto (Sem misturar decimais e inteiros)
                     st.session_state["cambio"] = float(params_rec.get("cambio", 5.144))
                     st.session_state["frete_internacional"] = float(params_rec.get("frete_internacional", 5100.0))
                     st.session_state["despesas_portuarias"] = float(params_rec.get("despesas_portuarias", 15000.0))
-                    st.session_state["ii"] = float(params_rec.get("ii", 0.35)) * 100
-                    st.session_state["ipi"] = float(params_rec.get("ipi", 0.0)) * 100
-                    st.session_state["pis"] = float(params_rec.get("pis", 0.021)) * 100
-                    st.session_state["cofins"] = float(params_rec.get("cofins", 0.0965)) * 100
-                    st.session_state["icms"] = float(params_rec.get("icms", 0.14)) * 100
-                    st.session_state["afrmm"] = float(params_rec.get("afrmm", 0.08)) * 100
-                    st.session_state["icms_venda"] = float(params_rec.get("icms_venda", 0.18) if params_rec.get("icms_venda", 18.0) < 1.0 else params_rec.get("icms_venda", 18.0))
-                    st.session_state["outros_custos_pct"] = float(params_rec.get("outros_custos_pct", 0.05) if params_rec.get("outros_custos_pct", 5.0) < 1.0 else params_rec.get("outros_custos_pct", 5.0))
+                    
+                    # Impostos de Importação (Tratados sempre multiplicando por 100 se vierem em decimal do banco)
+                    st.session_state["ii"] = float(params_rec.get("ii", 0.35)) * 100 if float(params_rec.get("ii", 0.35)) <= 1.0 else float(params_rec.get("ii", 0.35))
+                    st.session_state["ipi"] = float(params_rec.get("ipi", 0.0)) * 100 if float(params_rec.get("ipi", 0.0)) <= 1.0 else float(params_rec.get("ipi", 0.0))
+                    st.session_state["pis"] = float(params_rec.get("pis", 0.021)) * 100 if float(params_rec.get("pis", 0.021)) <= 1.0 else float(params_rec.get("pis", 0.021))
+                    st.session_state["cofins"] = float(params_rec.get("cofins", 0.0965)) * 100 if float(params_rec.get("cofins", 0.0965)) <= 1.0 else float(params_rec.get("cofins", 0.0965))
+                    st.session_state["icms"] = float(params_rec.get("icms", 0.14)) * 100 if float(params_rec.get("icms", 0.14)) <= 1.0 else float(params_rec.get("icms", 0.14))
+                    st.session_state["afrmm"] = float(params_rec.get("afrmm", 0.08)) * 100 if float(params_rec.get("afrmm", 0.08)) <= 1.0 else float(params_rec.get("afrmm", 0.08))
+                    
+                    # Parâmetros Comerciais e de Venda (Corrigido para manter sempre formato inteiro na tela)
+                    icms_v_salvo = float(params_rec.get("icms_venda", 18.0))
+                    st.session_state["icms_venda"] = icms_v_salvo * 100 if icms_v_salvo <= 1.0 else icms_v_salvo
+                    
+                    outros_c_salvo = float(params_rec.get("outros_custos_pct", 5.0))
+                    st.session_state["outros_custos_pct"] = outros_c_salvo * 100 if outros_c_salvo <= 1.0 else outros_c_salvo
+                    
                     st.session_state["tipo_frete_global"] = params_rec.get("tipo_frete", "Por Fatura (Proporcional ao valor em US$)")
                     st.session_state["modelo_carregado_itens"] = itens_rec
                     
-                    # Salva o markup customizado da simulação para a tabela 4 ler
+                    # Força o markup correto no slider comercial
                     if "markup" in params_rec:
                         st.session_state["markup_salvo_pasta"] = float(params_rec.get("markup"))
                     
-                    # 2. Força o Streamlit a destruir os inputs antigos e redesenhar com os valores da pasta
                     st.session_state["reset_widgets_key"] += 1
-                    
                     st.success("Cenário preparado!")
                     st.rerun()
                     
@@ -374,9 +380,16 @@ total_fob_t2 = (df_itens_editado["Qtd."] * df_itens_editado["FOB US$/un."]).sum(
 
 if is_frete_quantidade:
     total_peso_t2 = (df_itens_editado["Qtd."] * df_itens_editado["Peso Unit. (kg)"]).sum()
-    st.markdown(f"📊 **SOMA** — Quantidade Total: **{_fmt_qtd(int(total_qtd_t2))}** | FOB Total: **{_fmt_usd(total_fob_t2)}** | Peso Total: **{total_peso_t2:,.2f} kg**")
+    st.markdown(
+        f"<div style='text-align: right;'>📊 <b>SOMA</b> — Quantidade Total: <b>{_fmt_qtd(int(total_qtd_t2))}</b> | FOB Total: <b>{_fmt_usd(total_fob_t2)}</b> | Peso Total: <b>{total_peso_t2:,.2f} kg</b></div>",
+        unsafe_allow_html=True
+    )
 else:
-    st.markdown(f"📊 **SOMA** — Quantidade Total: **{_fmt_qtd(int(total_qtd_t2))}** | FOB Total: **{_fmt_usd(total_fob_t2)}**")
+    st.markdown(
+        f"<div style='text-align: right;'>📊 <b>SOMA</b> — Quantidade Total: <b>{_fmt_qtd(int(total_qtd_t2))}</b> | FOB Total: <b>{_fmt_usd(total_fob_t2)}</b></div>",
+        unsafe_allow_html=True
+    )
+
 
 st.divider()
 
@@ -422,13 +435,7 @@ resultado = calcular_simulacao(
     despesas_portuarias_rs=despesas_portuarias, ii=ii_val, ipi=ipi_val, pis=pis_val, cofins=cofins_val, afrmm=afrmm_val, icms=icms_val,
 )
 
-m1, m2, m3, m4 = st.columns(4)
-m1.metric("Total da invoice (US$)", _fmt_usd(resultado.total_invoice_usd))
-m2.metric("Mercadoria (R$)", _fmt_rs(resultado.mercadoria_rs_total))
-m3.metric("Valor aduaneiro (R$)", _fmt_rs(resultado.valor_aduaneiro_rs))
-m4.metric("Custo de Importação (R$)", _fmt_rs(resultado.custo_geral_importacao_rs))
-
-# Modificação no Passo 3 para exibir o valor das Despesas Portuárias no nome do encargo
+# === ESTRUTURA OFICIAL DE TRIBUTOS (CÁLCULO ADUANEIRO REAL) ===
 impostos_df = pd.DataFrame({
     "Tributo/Encargo": [
         f"II ({_fmt_pct(ii_val)})", 
@@ -436,8 +443,8 @@ impostos_df = pd.DataFrame({
         f"PIS-Importação ({_fmt_pct(pis_val)})", 
         f"COFINS-Importação ({_fmt_pct(cofins_val)})", 
         f"AFRMM ({_fmt_pct(afrmm_val)})", 
-        f"ICMS Importação ({_fmt_pct(icms_val)})", 
-        f"Despesas portuárias ({_fmt_rs(despesas_portuarias)})"  # <-- ATUALIZADO
+        f"ICMS Importação ({_fmt_pct(icms_val)} por dentro)", 
+        f"Despesas portuárias ({_fmt_rs(despesas_portuarias)})"
     ],
     "Valor (R$)": [
         resultado.ii_rs_total, 
@@ -450,13 +457,36 @@ impostos_df = pd.DataFrame({
     ]
 })
 
+# Calcula as somas com base nas regras aduaneiras oficiais do motor do sistema
 soma_impostos = impostos_df["Valor (R$)"].sum()
+frete_rs_total = frete_internacional * cambio
 
-df_impostos_render = impostos_df.copy()
-df_impostos_render["Valor (R$)"] = df_impostos_render["Valor (R$)"].map(_fmt_rs)
-st.dataframe(df_impostos_render, hide_index=True, use_container_width=True)
+# Renderização dos Cards Superiores Indicativos Oficiais
+m1, m2, m3, m4 = st.columns(4)
+m1.metric("Total da invoice (US$)", _fmt_usd(resultado.total_invoice_usd))
+m2.metric("Mercadoria (R$)", _fmt_rs(resultado.mercadoria_rs_total))
+m3.metric("Valor aduaneiro (FOB + Frete) (R$)", _fmt_rs(resultado.valor_aduaneiro_rs))
+m4.metric("Custo de Importação (R$)", _fmt_rs(resultado.custo_geral_importacao_rs))
 
-st.markdown(f"💰 **SOMA** — Total de Tributos/Encargos: **{_fmt_rs(soma_impostos)}**")
+# Exibe a tabela oficial de tributos na tela
+st.dataframe(impostos_df.copy().assign(**{"Valor (R$)": impostos_df["Valor (R$)"].map(_fmt_rs)}), hide_index=True, use_container_width=True)
+
+# Bloco informativo com o frete isolado e o nome atualizado: "soma de Tributos/Despesas"
+st.markdown(
+    f"""
+    <div style="text-align: right; margin-top: -10px; margin-bottom: 20px;">
+        <span style="font-size: 14px; color: #555; margin-right: 20px;">
+            📦 <b>Frete Internacional Convertido:</b> {_fmt_rs(frete_rs_total)}
+        </span>
+        <span style="font-size: 15px; color: #31333F; font-weight: bold;">
+            📊 <b>soma de Tributos/Despesas:</b> <span style="color: #FF4B4B;">{_fmt_rs(soma_impostos)}</span>
+        </span>
+    </div>
+    """,
+    unsafe_allow_html=True
+)
+
+
 
 st.divider()
 
@@ -470,29 +500,17 @@ st.header("4. Precificação Final Comercial (Markup e Impostos de Venda)")
 modo_global = st.radio("Modo de cálculo comercial", options=["Definir markup (%) e simular o preço de venda final", "Definir o preço de venda final e extrair o markup"], horizontal=True)
 modo_calc = "markup" if modo_global.startswith("Definir markup") else "preco_final"
 
-# [CORRIGIDO] Força a leitura do valor da pasta e injeta a chave dinâmica w_key para o slider redesenhar na tela
 markup_global_pct = st.session_state.get("markup_salvo_pasta", params_db.get("markup", 1.0) * 100)
 if modo_calc == "markup":
     markup_global_pct = st.slider("Markup padrão (%) aplicado aos itens", 0, 300, int(markup_global_pct), step=5, key=f"markup_slider{w_key}")
 
 linhas_precificacao = []
 for item in resultado.itens:
-    linha = {"Ref.": item.ref, "Produto": item.produto, "Custo Nacionalizado Unit.": round(item.custo_unit_rs, 2)}
-    if modo_calc == "markup":
-        linha["Markup (%)"] = float(markup_global_pct)
-    else:
-        linha["Preço Venda Final Requerido (R$)"] = round(item.custo_unit_rs * 2.0, 2)
-    linhas_precificacao.append(linha)
-
-# --- VISUALIZAÇÃO ATUALIZADA DO PASSO 4: Gráfico de Barras Empilhadas (Stacked) ---
-linhas_precificacao = []
-for item in resultado.itens:
     custo_base_unit = item.custo_unit_rs
     
     if modo_calc == "markup":
         mk_aplicado = float(markup_global_pct) / 100
-        divisor = 1.0 - (icms_venda_val + outros_custos_pct_val)
-        preco_venda_unit = (custo_base_unit * (1 + mk_aplicado)) / divisor if divisor > 0 else custo_base_unit * (1 + mk_aplicado)
+        preco_venda_unit = custo_base_unit * (1 + mk_aplicado)
     else:
         preco_venda_unit = round(custo_base_unit * 2.0, 2)
     
@@ -513,7 +531,6 @@ df_base_prec = pd.DataFrame(linhas_precificacao)
 # Construção do gráfico de barras
 fig_barras = go.Figure()
 
-# 1ª Camada: Custo Nacionalizado
 fig_barras.add_trace(go.Bar(
     y=df_base_prec["Identificador"],
     x=df_base_prec["Custo Nacionalizado Unit."],
@@ -523,72 +540,61 @@ fig_barras.add_trace(go.Bar(
     text=df_base_prec["Custo Nacionalizado Unit."].apply(lambda x: f"R$ {x:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")),
     textposition='inside',
     insidetextanchor='middle',
-    textfont=dict(color='white'), # Fonte branca para o custo interno
+    textfont=dict(color='white'),
     hovertemplate="<b>%{y}</b><br>Custo Nacionalizado: R$ %{x:,.2f}<extra></extra>"
 ))
 
-# 2ª Camada: Acréscimo Comercial (Verde Água Escurecido + Texto Branco + Rótulo Externo)
 fig_barras.add_trace(go.Bar(
     y=df_base_prec["Identificador"],
     x=df_base_prec["Margem Comercial Unit."],
-    name="Margem + Impostos de Venda",
+    name="Margem de Lucro Bruta",
     orientation='h',
-    marker_color='#00A877', # ATUALIZADO: Verde água mais escuro para melhor legibilidade
+    marker_color='#00A877', 
     text=df_base_prec["Markup (%)"].apply(lambda x: f"Markup {x:.0f}%"),
     textposition='inside',
     insidetextanchor='middle',
-    textfont=dict(color='white'), # ATUALIZADO: Fonte rigorosamente em branco dentro do verde
+    textfont=dict(color='white'),
     hovertemplate="<b>%{y}</b><br>Margem Comercial: R$ %{x:,.2f}<extra></extra>"
 ))
 
-# 3ª Camada Invisível (Apenas para fixar o rótulo externo "Preço Venda: R$ XX,XX" sem quebrar o empilhamento)
 fig_barras.add_trace(go.Bar(
     y=df_base_prec["Identificador"],
-    x=[0.001] * len(df_base_prec), # Tamanho quase nulo para servir apenas de âncora na ponta
+    x=[0.001] * len(df_base_prec),
     orientation='h',
     showlegend=False,
-    marker=dict(color='rgba(0,0,0,0)'), # Totalmente transparente
-    # ATUALIZADO: Exibe o texto estático "Preço Venda: R$ XX,XX" colado no final da barra verde
+    marker=dict(color='rgba(0,0,0,0)'),
     text=df_base_prec["Preço Venda Unit."].apply(lambda x: f" Preço Venda: R$ {x:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")),
     textposition='outside', 
     hoverinfo='skip'
 ))
 
-# --- AJUSTE DE LAYOUT PARA NÃO CORTAR O TEXTO ---
-
-# 1. Encontra o maior preço de venda para calcular um fôlego no eixo X
 maior_preco = float(df_base_prec["Preço Venda Unit."].max()) if not df_base_prec.empty else 100.0
 
 fig_barras.update_layout(
-    title="Composição do Preço de Venda Final (Custo vs. Formação de Margem)",
+    title="Composição do Preço de Venda Final (Custo de Importação vs. Formação de Margem)",
     xaxis_title="Valor por Unidade (R$)",
-    # Define manualmente o limite do eixo X com 25% de folga para o rótulo caber perfeitamente
     xaxis=dict(range=[0, maior_preco * 1.25]), 
     barmode='stack', 
     legend=dict(orientation="h", yanchor="top", y=-0.25, xanchor="center", x=0.5),
     yaxis=dict(autorange="reversed"), 
-    margin=dict(l=10, r=20, t=40, b=80), # Margem direita reduzida pois a folga agora está no próprio eixo X
+    margin=dict(l=10, r=20, t=40, b=80),
     height=120 + (len(df_base_prec) * 38), 
 )
-
-# Garante que o texto fora da barra possa ser desenhado além da linha do gráfico sem ser clipado (cortado)
 fig_barras.update_traces(cliponaxis=False)
-
 st.plotly_chart(fig_barras, use_container_width=True, config={'displayModeBar': False})
 
-
-# Bloco Final de Compatibilidade com o restante das tabelas do app
 if modo_calc == "markup":
     df_prec_editado = df_base_prec[["Ref.", "Produto", "Custo Nacionalizado Unit.", "Markup (%)"]].copy()
 else:
     df_prec_editado = df_base_prec.rename(columns={"Preço Venda Unit.": "Preço Venda Final Requerido (R$)"})
-# --------------------------------------------------------------------------------
 
-
-# Recálculo Comercial Pós-Importação
+# === RECÁLCULO COMERCIAL CONSOLIDADO DEDUÇÃO DE VENDAS ===
 det_rows = []
-total_receita_simulada = 0.0
-total_custo_comercial_total = 0.0
+total_faturamento_esperado = 0.0
+total_icms_venda_acumulado = 0.0
+total_outros_venda_acumulado = 0.0
+total_faturamento_liquido_acumulado = 0.0
+total_lucro_liquido_acumulado = 0.0
 
 for idx, item in enumerate(resultado.itens):
     row_edit = df_prec_editado.iloc[idx]
@@ -596,25 +602,36 @@ for idx, item in enumerate(resultado.itens):
     
     if modo_calc == "markup":
         mk_aplicado = float(row_edit["Markup (%)"]) / 100
-        divisor = 1.0 - (icms_venda_val + outros_custos_pct_val)
-        preco_venda_unit = (custo_base_unit * (1 + mk_aplicado)) / divisor if divisor > 0 else custo_base_unit * (1 + mk_aplicado)
+        preco_venda_unit = custo_base_unit * (1 + mk_aplicado)
     else:
         preco_venda_unit = float(row_edit["Preço Venda Final Requerido (R$)"])
-        margem_liquida_rs = (preco_venda_unit * (1.0 - icms_venda_val - outros_custos_pct_val)) - custo_base_unit
+        margem_liquida_rs = preco_venda_unit - custo_base_unit
         mk_aplicado = (margem_liquida_rs / custo_base_unit) if custo_base_unit > 0 else 0.0
 
+    # Cálculos das colunas comerciais solicitadas
     venda_total_item = preco_venda_unit * item.qtd
-    icms_venda_rs = venda_total_item * icms_venda_val
-    outros_custos_rs = venda_total_item * outros_custos_pct_val
-    custo_total_comercial_item = item.custo_total_rs + icms_venda_rs + outros_custos_rs
-    lucro_liquido_item = venda_total_item - custo_total_comercial_item
-    
-    total_receita_simulada += venda_total_item
-    total_custo_comercial_total += custo_total_comercial_item
+    icms_venda_item = venda_total_item * icms_venda_val
+    outros_venda_item = venda_total_item * outros_custos_pct_val
+    faturamento_liquido_item = venda_total_item - icms_venda_item - outros_venda_item
+    lucro_liquido_item = faturamento_liquido_item - item.custo_total_rs
+
+    # Acumuladores Globais
+    total_faturamento_esperado += venda_total_item
+    total_icms_venda_acumulado += icms_venda_item
+    total_outros_venda_acumulado += outros_venda_item
+    total_faturamento_liquido_acumulado += faturamento_liquido_item
+    total_lucro_liquido_acumulado += lucro_liquido_item
     
     det_rows.append({
-        "Produto": f"{item.ref} — {item.produto}", "Qtd.": int(item.qtd), "Custo Nac. Un.": custo_base_unit,
-        "Markup": mk_aplicado, "Preço Venda Un.": preco_venda_unit, "Faturamento Esperado": venda_total_item, "Lucro Líquido": lucro_liquido_item
+        "Produto": f"{item.ref} — {item.produto}", 
+        "Qtd.": int(item.qtd), 
+        "Custo Nac. Un.": custo_base_unit,
+        "Preço Venda Un.": preco_venda_unit, 
+        "Fat. Esperado": venda_total_item,
+        f"ICMS Venda ({_fmt_pct(icms_venda_val)})": icms_venda_item,
+        f"Outros ({_fmt_pct(outros_custos_pct_val)})": outros_venda_item,
+        "Fat. Líquido": faturamento_liquido_item,
+        "Lucro Líquido": lucro_liquido_item
     })
 
 df_detalhado_final = pd.DataFrame(det_rows)
@@ -622,51 +639,81 @@ st.subheader("📋 Tabela Consolidada de Distribuição Comercial por Item")
 
 df_det_render = df_detalhado_final.copy()
 df_det_render["Custo Nac. Un."] = df_det_render["Custo Nac. Un."].map(_fmt_rs)
-df_det_render["Markup"] = df_det_render["Markup"].map(_fmt_pct)
 df_det_render["Preço Venda Un."] = df_det_render["Preço Venda Un."].map(_fmt_rs)
-df_det_render["Faturamento Esperado"] = df_det_render["Faturamento Esperado"].map(_fmt_rs)
+df_det_render["Fat. Esperado"] = df_det_render["Fat. Esperado"].map(_fmt_rs)
+df_det_render[f"ICMS Venda ({_fmt_pct(icms_venda_val)})"] = df_det_render[f"ICMS Venda ({_fmt_pct(icms_venda_val)})"].map(_fmt_rs)
+df_det_render[f"Outros ({_fmt_pct(outros_custos_pct_val)})"] = df_det_render[f"Outros ({_fmt_pct(outros_custos_pct_val)})"].map(_fmt_rs)
+df_det_render["Fat. Líquido"] = df_det_render["Fat. Líquido"].map(_fmt_rs)
 df_det_render["Lucro Líquido"] = df_det_render["Lucro Líquido"].map(_fmt_rs)
 
 st.dataframe(df_det_render, hide_index=True, use_container_width=True)
 
-lucro_global_calculado = total_receita_simulada - total_custo_comercial_total
-roi_global_calculado = (lucro_global_calculado / total_custo_comercial_total) if total_custo_comercial_total > 0 else 0.0
+# --- INFORMATIVO DE TOTAIS COMERCIAIS ALINHADO ---
+st.markdown(
+    f"""
+    <div style="background-color: #f0f2f6; padding: 14px; border-radius: 6px; margin-top: -10px; margin-bottom: 20px; text-align: right; display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 20px;">
+        <span style="font-size: 14px; color: #31333F;">📈 Fat. Esperado: <b>{_fmt_rs(total_faturamento_esperado)}</b></span>
+        <span style="font-size: 14px; color: #31333F;">💸 ICMS Venda: <b>{_fmt_rs(total_icms_venda_acumulado)}</b></span>
+        <span style="font-size: 14px; color: #31333F;">📣 Outros (Mkt): <b>{_fmt_rs(total_outros_venda_acumulado)}</b></span>
+        <span style="font-size: 14px; color: #1b2a4a; font-weight: bold;">📊 Fat. Líquido: {_fmt_rs(total_faturamento_liquido_acumulado)}</span>
+        <span style="font-size: 15px; color: #00A877; font-weight: bold;">💰 Lucro Líquido: {_fmt_rs(total_lucro_liquido_acumulado)}</span>
+    </div>
+    """, 
+    unsafe_allow_html=True
+)
 
-# ----------------------------------------------------------------------------
-# Atualização dos gráficos de rosca e blocos de KPI originais (Topo da página)
-# ----------------------------------------------------------------------------
+roi_global_calculado = (total_lucro_liquido_acumulado / resultado.custo_geral_importacao_rs) if resultado.custo_geral_importacao_rs > 0 else 0.0
+
+# Atualização dos gráficos superiores
 with placeholder_chart:
-    labels_pie = ['Custo de Importação<br>+ Comercial', 'Lucro Líquido Estimado']
-    values_pie = [total_custo_comercial_total, lucro_global_calculado]
-    text_values_pie = [_fmt_rs(v) for v in values_pie]
-
-    fig = go.Figure(data=[go.Pie(
-        labels=labels_pie, 
-        values=values_pie, 
-        hole=.5,
-        marker=dict(colors=['#FF4B4B', '#00D48A']),
+    # Coleta os valores consolidados para o gráfico macro
+    valores_macro = [
+        resultado.custo_geral_importacao_rs, 
+        (total_icms_venda_acumulado + total_outros_venda_acumulado), 
+        max(0.0, total_lucro_liquido_acumulado)
+    ]
+    
+    # Criando um gráfico de barras empilhadas horizontal muito mais limpo para o dashboard superior
+    fig_macro = go.Figure()
+    
+    fig_macro.add_trace(go.Bar(
+        y=['Operação'], x=[valores_macro[0]], name='Custo Importação',
+        orientation='h', marker_color='#1b2a4a',
+        text=[_fmt_rs(valores_macro[0])], textposition='inside', textfont=dict(color='white')
+    ))
+    
+    fig_macro.add_trace(go.Bar(
+        y=['Operação'], x=[valores_macro[1]], name='Custos de Venda',
+        orientation='h', marker_color='#FF4B4B',
+        text=[_fmt_rs(valores_macro[1])], textposition='inside', textfont=dict(color='white')
+    ))
+    
+    fig_macro.add_trace(go.Bar(
+        y=['Operação'], x=[valores_macro[2]], name='Lucro Líquido Real',
+        orientation='h', marker_color='#00D48A',
+        text=[_fmt_rs(valores_macro[2])], textposition='inside', textfont=dict(color='white')
+    ))
+    
+    fig_macro.update_layout(
+        barmode='stack',
+        margin=dict(t=5, b=5, l=5, r=5),
+        height=140,
         showlegend=True,
-        text=text_values_pie,
-        textinfo='label+text',
-        textposition='outside',
-        hoverinfo='label+text'
-    )])
-    fig.update_layout(
-        margin=dict(t=10, b=10, l=10, r=10),
-        height=180,
-        legend=dict(orientation="h", yanchor="bottom", y=-0.5, xanchor="center", x=0.5)
+        legend=dict(orientation="h", yanchor="bottom", y=-1.0, xanchor="center", x=0.5),
+        xaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
+        yaxis=dict(showticklabels=False)
     )
-    st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
+    
+    st.plotly_chart(fig_macro, use_container_width=True, config={'displayModeBar': False})
+
 
 with placeholder_metric:
-    # Simulação visual perfeita do st.metric com quebra de linha livre para o Markup
-    # Alterado font-weight do valor do ROI para 400 para remover o negrito
     html_metric = f"""
     <div style="font-family: sans-serif;">
         <span style="font-size: 14px; color: #555; font-weight: 400;">ROI Real da Operação</span>
         <div style="font-size: 36px; font-weight: 400; color: #111; margin: 4px 0;">{roi_global_calculado * 100:.2f}%</div>
         <div style="background-color: #e8f8f2; color: #008a57; padding: 4px 10px; border-radius: 20px; display: inline-block; font-size: 14px; font-weight: 500;">
-            📈 ↑ Lucro: {_fmt_rs(lucro_global_calculado)}<br>
+            📈 ↑ Lucro Real: {_fmt_rs(total_lucro_liquido_acumulado)}<br>
             📊 Markup Selecionado: {markup_global_pct:.1f}%
         </div>
     </div>
@@ -681,52 +728,50 @@ nome_da_pasta = st.text_input("Dê um nome para a sua pasta de simulação:", pl
 
 if st.button("💾 Salvar Pasta de Simulação", type="primary"):
     if nome_da_pasta.strip():
-        # [RESOLVIDO] Injetando a variável do markup atual para salvar fisicamente no registro do banco
         payload_params = {
             "cambio": cambio, "frete_internacional": frete_internacional, "despesas_portuarias": despesas_portuarias,
-            "ii": ii_val, "ipi": ipi_val, "pis": pis_val, "cofins": cofins_val, "icms": icms_val, "afrmm": afrmm_val,
-            "icms_venda": icms_venda_val,
-            "outros_custos_pct": outros_custos_pct_val,
-            "tipo_frete": tipo_frete_global,
-            "markup": markup_global_pct  # Adicionado o markup do slider no pacote da pasta
+            "ii": ii_val, 
+            "ipi": ipi_val, 
+            "pis": pis_val, 
+            "cofins": cofins_val, 
+            "icms": icms_val, 
+            "afrmm": afrmm_val,
+            "icms_venda": icms_venda_val, 
+            "outros_custos_pct": outros_custos_pct_val, 
+            "tipo_frete": tipo_frete_global, 
+            "markup": markup_global_pct
         }
         payload_itens = df_itens_editado.to_dict(orient="records")
-        
         salvar_modelo_simulacao(nome_da_pasta, payload_params, payload_itens)
         st.success(f"Simulação '{nome_da_pasta}' arquivada com sucesso com TODOS os parâmetros e markup salvos!")
         st.rerun()
     else:
         st.warning("Insira um nome válido para conseguir salvar a pasta.")
 
-
 st.divider()
 
 # ============================================================================
-#%% 5. Resumo Financeiro Consolidado da Remessa
+# 5. Resumo Financeiro Consolidado da Remessa
 # ============================================================================
 st.header("5. Resumo Financeiro Consolidado da Remessa")
 
 r1, r2, r3, r4 = st.columns(4)
-r1.metric("Custo Total Acumulado (R\$)", _fmt_rs(total_custo_comercial_total))
-r2.metric("Receita Total Bruta (R\$)", _fmt_rs(total_receita_simulada))
-r3.metric("Lucro Líquido Final (R\$)", _fmt_rs(lucro_global_calculado))
-r4.metric("ROI Líquido da Operação", _fmt_pct(roi_global_calculado))
+r1.metric("Custo Total Importação (R$)", _fmt_rs(resultado.custo_geral_importacao_rs))
+r2.metric("Faturamento Líquido (R$)", _fmt_rs(total_faturamento_liquido_acumulado))
+r3.metric("Lucro Líquido Final (R$)", _fmt_rs(total_lucro_liquido_acumulado))
+r4.metric("ROI Líquido sobre Importação", _fmt_pct(roi_global_calculado))
 
-st.subheader("💰 Preço Final Total da Remessa (Faturamento Estimado)")
+st.subheader("💰 Preço Final Total da Remessa (Faturamento Esperado Bruto)")
 st.markdown(
     f"<div style='background-color:#1b2a4a;color:white;padding:18px;border-radius:8px;"
-    f"font-size:28px;font-weight:bold;text-align:center;'>{_fmt_rs(total_receita_simulada)}</div>",
+    f"font-size:28px;font-weight:bold;text-align:center;'>{_fmt_rs(total_faturamento_esperado)}</div>",
     unsafe_allow_html=True,
 )
 
 st.divider()
 
 # ============================================================================
-
-# %% 6. Geração e Prévia de PDF (VISUALIZADOR CORRIGIDO E RESTAURADO)
-# ============================================================================
-# ============================================================================
-# %% 6. Geração e Prévia de PDF (VISUALIZADOR CORRIGIDO E RESTAURADO)
+# 6. Geração e Prévia de PDF Completamente Corrigida
 # ============================================================================
 st.header("6. Gerar e Visualizar Orçamento em PDF")
 
@@ -739,30 +784,22 @@ observacoes = st.text_area("Observações do Orçamento (opcional)", height=80, 
 
 if st.button("📄 Gerar e Visualizar PDF"):
     import copy
-    # 1. Criamos um clone do resultado para não estragar a memória da tela
     resultado_pdf = copy.deepcopy(resultado)
     
-    # 2. Varre cada item e força o objeto a recalcular e gravar o markup/preço final selecionados na tela
     for idx, item in enumerate(resultado_pdf.itens):
         row_edit = df_prec_editado.iloc[idx]
         
         if modo_calc == "markup":
-            # Puxa os 40% (ou o valor digitado) da linha do editor
             mk_aplicado = float(row_edit["Markup (%)"]) / 100
-            divisor = 1.0 - (icms_venda_val + outros_custos_pct_val)
-            
-            # Aplica a mesma fórmula comercial padrão do Passo 4
-            preco_venda_unit = (item.custo_unit_rs * (1 + mk_aplicado)) / divisor if divisor > 0 else item.custo_unit_rs * (1 + mk_aplicado)
+            preco_venda_unit = item.custo_unit_rs * (1 + mk_aplicado)
         else:
             preco_venda_unit = float(row_edit["Preço Venda Final Requerido (R$)"])
-            margem_liquida_rs = (preco_venda_unit * (1.0 - icms_venda_val - outros_custos_pct_val)) - item.custo_unit_rs
+            margem_liquida_rs = preco_venda_unit - item.custo_unit_rs
             mk_aplicado = (margem_liquida_rs / item.custo_unit_rs) if item.custo_unit_rs > 0 else 0.0
 
-        # Grava os valores calculados diretamente nas propriedades oficiais lidas pelo PDF de fábrica
         item.markup = mk_aplicado
         item.preco_venda_unit_calculado = preco_venda_unit
 
-    # 3. Chama a função estável original (sem parâmetros extras que geravam TypeError)
     bytes_temp = gerar_pdf_orcamento(
         resultado=resultado_pdf, 
         logo_path=str(LOGO_PATH), 
@@ -772,15 +809,14 @@ if st.button("📄 Gerar e Visualizar PDF"):
     )
     
     st.session_state.pdf_bytes_gerado = bytes_temp
-    st.session_state.pdf_generated_sucesso = True  # Define que a geração funcionou
-    st.session_state.pdf_gerado_sucesso = True     # Garante sincronismo com o seu verificador
+    st.session_state.pdf_generated_sucesso = True
+    st.session_state.pdf_gerado_sucesso = True
 
-# Bloco do Visualizador acoplado após a geração
 if st.session_state.get("pdf_gerado_sucesso") and st.session_state.pdf_bytes_gerado is not None:
-    st.success("PDF gerado com sucesso! Veja a prévia abaixo:")
+    st.success("PDF generated com sucesso! Veja a prévia abaixo:")
     
     try:
-        import fitz  # PyMuPDF
+        import fitz
         doc = fitz.open(stream=st.session_state.pdf_bytes_gerado, filetype="pdf")
         for pagina_num in range(len(doc)):
             pagina = doc.load_page(pagina_num)
